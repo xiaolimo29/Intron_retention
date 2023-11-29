@@ -7,7 +7,7 @@ institute: Xiamen University
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-# 1. Differentially gene expression analysis
+# 1. Differential gene expression analysis
 
 ```{r differential expression analysis}
 library(dplyr)
