@@ -1,6 +1,6 @@
 # Intron_retetion
 
-In this project, we study the intron splicing mediated by male gametocyte specific RNA binding protein RBPm1 in *Plasmodium yoelii*.
+In this project, we studied the intron splicing mediated by male gametocyte specific RNA binding protein RBPm1 in *Plasmodium yoelii*.
 
 All the codes and files necessary for reproducing the bioinformatics analysis of this study are uploaded to this repository.
 
