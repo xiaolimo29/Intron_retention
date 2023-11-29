@@ -1,0 +1,200 @@
+---
+title: "Sex-speicif RBP enrichment analysis"
+author: "Xiaoli Mo"
+institute: Xiamen University
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+# 1. RBPs in Plasmodium yoelii
+```{r analyze RBPs in py}
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(edgeR)
+
+counts <- read.table("male_vs_female_final_counts_output",header = T)
+colnames(counts) <- gsub("X.cluster.facility.jyuan.ximo.Rbpm1.Py_2023.2018vs2023.map.","",
+                            colnames(counts),fix=T)
+colnames(counts) <- gsub(".bam.sort.bam","",colnames(counts),fix = T)
+row.names(count) <- count[,1]
+count <- count[,-1]
+group <- rep(c('female', 'male'), each = 3)
+
+dgelist <- DGEList(counts = count, group = group)
+keep <- rowSums(cpm(dgelist) > 1 ) >= 2 
+dgelist <- dgelist[keep, , keep.lib.sizes = FALSE]
+dgelist_norm <- calcNormFactors(dgelist, method = 'TMM')
+design <- model.matrix(~group)
+dge <- estimateDisp(dgelist_norm, design, robust = TRUE)
+fit <- glmQLFit(dge, design, robust = TRUE)
+lrt <- topTags(glmQLFTest(fit), n = nrow(dgelist$counts))
+write.csv(lrt, 'py_female_vs_male.csv')
+
+py_deg <- read.csv("py_female_vs_male.csv",header = T)
+py_rbp_list <- read.delim("py_rbp_list.txt", header = T)
+
+colnames(py_deg)[1] <- "geneID"
+colnames(py_rbp_list)[1] <- "geneID"
+
+py_rbp <- py_deg[0,]
+
+for (i in 1:nrow(py_rbp_list)) {
+    temp1 <- filter(py_deg, geneID == py_rbp_list[i,])
+    py_rbp <- rbind(py_rbp, temp1)
+}
+
+
+temp2 <- filter(py_rbp_list, !geneID %in% py_deg[,1])
+temp2 <- mutate(temp2, logFC = 0, logCPM = 0, F = 0, PValue = 1, FDR =1)
+
+py_rbp <- rbind(py_rbp, temp2)
+
+vol_r_data <- data.frame(gene = py_rbp$geneID,
+                       FDR = -log10(py_rbp$FDR), 
+                       lfc = py_rbp$logFC)
+
+vol_r_data <- mutate(vol_r_data, color = case_when(vol_r_data$lfc > 1 &vol_r_data$FDR > 1.3  ~ "Increased",
+                                                  vol_r_data$lfc < -1 & vol_r_data$FDR > 1.3  ~ "Decreased",
+                                                  vol_r_data$FDR < 1  ~ "nonsignificant",
+                                                  vol_r_data$lfc <= 1 & vol_r_data$lfc >= -1 ~ "nonsignificant"
+))
+
+vol_r <- ggplot(vol_r_data, aes(x = lfc, y = FDR, color = color))
+
+vol_r +    
+    geom_point(size = 2.5, na.rm = T) +
+    scale_color_manual(name = "Directionality",
+                       values = c(Increased = "#D7D7D7", Decreased = "#D7D7D7", nonsignificant = "#D7D7D7")) +
+    theme_bw(base_size = 14) + 
+    theme(legend.position = "right") + 
+    xlab(expression(log[2]("Male/Female"))) +
+    ylab(expression(-log[10]("FDR"))) + 
+    geom_hline(yintercept = 1.3, colour = "darkgrey", linetype="dashed") + 
+    geom_vline(xintercept = 1, colour = "darkgrey", linetype="dashed") + 
+    geom_vline(xintercept = -1, colour = "darkgrey", linetype="dashed") +
+    geom_text_repel(aes(label ="Rbpm1(PY17X_0716700)"),  data = vol_r_data[vol_r_data$gene == "PY17X_0716700",],
+                    size=4, color = "black", min.segment.length = unit(0.1, 'lines'), 
+                    nudge_y = 0.6) +
+    geom_text_repel(aes(label ="CITH"),  data = vol_r_data[vol_r_data$gene == "PY17X_1304900",],
+                    size=4, color = "black", min.segment.length = unit(0.1, 'lines'), 
+                    nudge_y = 0.6) +
+    geom_point(
+               data = vol_r_data[vol_r_data$gene == "PY17X_0716700",], size = 5.0, color = "#CD4F39") +
+    geom_point(
+               data = vol_r_data[vol_r_data$gene == "PY17X_1304900",], size = 5.0, color = "#FFB266") +
+    theme_bw() + 
+    theme(panel.grid=element_blank()) 
+```
+
+# 2. RBPs in Plasmodium berghei
+
+```{r analyze RBPs in pb}
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(edgeR)
+
+pb_count <- read.table("pb_2017_final_counts_output.txt",header = T)
+colnames(pb_count) <- gsub("X.cluster.facility.jyuan.ximo.Rbpm1.Pb_2017.map.","", colnames(pb_count),fix = T)
+colnames(pb_count) <- gsub("_trimmed.bam.sort.bam","", colnames(pb_count),fix = T)
+row.names(pb_count) <- pb_count[,1]
+pb_count <- pb_count[,-1]
+group <- rep(c('female', 'male'), each = 3)
+
+dgelist <- DGEList(counts = pb_count, group = group)
+keep <- rowSums(cpm(dgelist) > 1 ) >= 2 
+dgelist <- dgelist[keep, , keep.lib.sizes = FALSE]
+dgelist_norm <- calcNormFactors(dgelist, method = 'TMM')
+design <- model.matrix(~group)
+dge <- estimateDisp(dgelist_norm, design, robust = TRUE)
+fit <- glmQLFit(dge, design, robust = TRUE)
+lrt <- topTags(glmQLFTest(fit), n = nrow(dgelist$counts))
+write.csv(lrt, 'pb_deg.csv')
+
+pb_rbp_list <- read.delim("pb_rbp_list.txt", header = T)
+
+pb_deg <- read.csv("pb_deg.csv",header = T)
+colnames(pb_deg)[1] <- "geneID"
+colnames(pb_rbp_list)[1] <- "geneID"
+
+pb_rbp <- pb_deg[,0]
+
+for (i in 1:nrow(pb_rbp_list)) {
+    temp1 <- filter(pb_deg, geneID == pb_rbp_list[i,])
+    pb_rbp <- rbind(pb_rbp, temp1)
+}
+
+
+temp2 <- filter(pb_rbp_list, !geneID %in% pb_deg[,1])
+temp2 <- mutate(temp2, logFC = 0, logCPM = 0, F = 0, PValue = 1, FDR =1)
+
+pb_rbp <- rbind(pb_rbp, temp2)
+
+vol_data <- data.frame(gene = pb_rbp$geneID,
+                       FDR = -log10(pb_rbpd$FDR), 
+                       lfc = pb_rbp$logFC)
+
+vol_data <- mutate(vol_data, color = case_when(vol_data$lfc > 1 & vol_data$FDR > 1.3  ~ "Increased",  
+                                               vol_data$FDR < 1  ~ "nonsignificant",
+                                               vol_data$lfc <= 1 & vol_data$lfc >= -1 ~ "nonsignificant"
+                                               ))
+vol <- ggplot(vol_data, aes(x = lfc, y = FDR, color = color))
+
+vol +    
+    geom_point(size = 2.5, na.rm = T) +
+    scale_color_manual(name = "Directionality",
+                       values = c(Increased = "#D7D7D7", Decreased = "#D7D7D7", nonsignificant = "#D7D7D7")) +
+    theme_bw(base_size = 14) + 
+    theme(legend.position = "right") + 
+    xlab(expression(log[2]("Male/Female"))) +
+    ylab(expression(-log[10]("FDR"))) + 
+    geom_hline(yintercept = 1.3, colour = "darkgrey", linetype="dashed") + 
+    geom_vline(xintercept = 1, colour = "darkgrey", linetype="dashed") + 
+    geom_vline(xintercept = -1, colour = "darkgrey", linetype="dashed") +
+    geom_text_repel(aes(label ="Rbpm1(PBANKA_0716500)"),  data = vol_data[vol_data$gene == "PBANKA_0716500",],
+                    size=4, color = "black", min.segment.length = unit(0.1, 'lines'), 
+                    nudge_y = 0.6) +
+    geom_text_repel(aes(label ="CITH"),  data = vol_data[vol_data$gene == "PBANKA_1301300",],
+                    size=4, color = "black", min.segment.length = unit(0.1, 'lines'), 
+                    nudge_y = 0.6) +
+    geom_point(
+               data = vol_data[vol_data$gene == "PBANKA_0716500",], size = 5.0, color = "#CD4F39") +
+    geom_point(
+               data = vol_data[vol_data$gene == "PBANKA_1301300",], size = 5.0, color = "#FFB266") +
+    theme_bw() + 
+    theme(panel.grid=element_blank())
+
+write.csv(pb_rbp,"pb_rbp.csv")
+```
+
+# 3. RBPs in Plasmodium falciparum
+```{r analyze RBPs in pf}
+library(dplyr)
+library(edgeR)
+library(ggplot2)
+library(edgeR)
+
+pf_cuff <- read.delim("D:/Study/Yuan lab/Rbpm1/Rbps/179 Pb Pf/workspace/pf_cuff.diff")
+pf_deg <- pf_cuff[,c(2,10,13)]
+colnames(pf_deg)[2] <- "logFC"
+colnames(pf_deg)[3] <- "FDR"
+pf_list <- read.csv("D:/Study/Yuan lab/Rbpm1/Rbps/179 Pb Pf/workspace/pf_list.txt", sep="")
+
+pf_rbp <- pf_deg[,0]
+
+for (i in 1:nrow(pf_list)) {
+    temp1 <- filter(pf_deg, gene_id == pf_list[i,])
+    pf_rbp <- rbind(pf_rbp, temp1)
+}
+
+
+temp2 <- filter(pf_list, !gene_id %in% pf_deg[,1])
+temp2 <- mutate(temp2, logFC = 0, FDR =1)
+
+pf_rbp[,2] <- pf_rbp[,2]*-1
+write.csv(pf_rbp,"pf_rbp_fc_fdr.csv")
+```
