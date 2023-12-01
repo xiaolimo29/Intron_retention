@@ -18,5 +18,5 @@ Run `IR.Rmd` for intron retention analysis based on *Plasmodium yoelii* RNA-seq 
 ### Data required for sex-specific RBP enrichment analysis
 Located in `RBP` directory.
 
-### Data required for intron retetion analysis
+### Data required for intron retention analysis
 Located in `IR` directory.
