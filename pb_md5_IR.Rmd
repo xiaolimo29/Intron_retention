@@ -1,0 +1,687 @@
+---
+title: "pb_md5_IR"
+author: "Xiaoli Mo"
+institute: Xiamen University
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Cell clustering by Plasmodium berghei single cell RNA-seq data
+
+```{r Pb clustering by RNA-seq}
+# load required packages
+library(dplyr)
+library(Seurat)
+library(viridis)
+library(ggpubr)
+library(cowplot)
+library(ggplot2bdc)
+library(patchwork)
+library(stringr)
+library(edgeR)
+library(PCAtools)
+library(scCustomize)
+library(ComplexHeatmap)
+
+#load counts matrix
+
+counts <- read.delim("counts_with_header.txt", header = TRUE)
+View(counts)
+row.names(counts) <- counts[, 1]
+counts <- counts[, -1]
+counts <- counts[1:5254,]
+
+#load pheno_2020 from Andrew J.C. Russell et.al. as metadata
+pheno_2020 <- read.csv("pheno_2020.csv")
+pheno_2020 <- pheno_2020[, -1]
+rownames(pheno_2020) <- pheno_2020$sample_id
+pheno_as_removed <- filter(pheno_2020, pheno_2020$species != "As")
+pheno_as_c_removed <- filter(pheno_as_removed,
+                            pheno_as_removed$is_control != "TRUE")
+
+names_of_genotype_fail_cells <-rownames(pheno_as_c_removed[(pheno_as_c_removed$sub_identity_updated %in% 
+                                        c("GCSKO-10", "WT-10", "GCSKO-27", "GCSKO-28")), ]) 
+pheno_as_c_removed_gp_ps <- filter(pheno_as_c_removed, ! row.names(pheno_as_c_removed) %in% names_of_genotype_fail_cells)
+
+pheno_as_c_removed_gp_ps$identity_name_updated[pheno_as_c_removed_gp_ps$identity_name_updated == "md3"] <- "mdx"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "md3"] <- "mdx" 
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "WT-md3"] <- "WT-mdx"  
+
+pheno_as_c_removed_gp_ps$identity_name_updated[pheno_as_c_removed_gp_ps$identity_name_updated == "md5"] <- "md3"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "md5"] <- "md3" 
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "WT-md5"] <- "WT-md3"
+
+pheno_as_c_removed_gp_ps$identity_name_updated[pheno_as_c_removed_gp_ps$identity_name_updated == "md4"] <- "md5"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "md4"] <- "md5"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "WT-md4"] <- "WT-md5"
+
+pheno_as_c_removed_gp_ps$identity_name_updated[pheno_as_c_removed_gp_ps$identity_name_updated == "mdx"] <- "md4"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "mdx"] <- "md4"
+pheno_as_c_removed_gp_ps$sub_name_updated[pheno_as_c_removed_gp_ps$sub_name_updated == "WT-mdx"] <- "WT-md4"
+
+pheno <- filter(pheno_as_c_removed_gp_ps,
+                pheno_as_c_removed_gp_ps$sample_id %in% colnames(counts))
+
+# create Seurat Object
+ss2_mutants <- CreateSeuratObject(counts = counts,
+                                  project = "GCSKO",
+                                  min.cells = 0,
+                                  min.features = 1,
+                                  meta.data = pheno)
+ss2_mutants@meta.data$experiment <- "ss2_mutants"
+
+# quality control and data filtering
+mito_genes <- ss2_mutants@assays$RNA@counts@Dimnames[[1]][grep("^PBANKA-MIT",
+                                                               ss2_mutants@assays$RNA@counts@Dimnames[[1]])]
+VlnPlot(object = ss2_mutants,
+        features = mito_genes,
+        pt.size = 0.01,
+        group.by = "experiment")
+
+ss2_mutants <- PercentageFeatureSet(ss2_mutants,
+                                    pattern = "^PBANKA-MIT",
+                                    col.name = "percent.mt")
+
+v1 <- VlnPlot(object = ss2_mutants, features = "percent.mt",
+             group.by = "sub_name_updated", pt.size = 0.01) +
+      geom_hline(yintercept=20) +
+      theme(legend.position = "none") +
+      labs(x = "Genotype", y = "% Mitochondrial Reads") +
+      theme(plot.title = element_blank()) +
+      scale_fill_manual(values = rep("grey", 18))
+
+v2 <- VlnPlot(object = ss2_mutants, 
+              features = "percent.mt",
+              group.by = "experiment",
+              pt.size = 0.01) +
+      geom_hline(yintercept=20) +
+      theme(legend.position = "none") +
+      labs(x="", y = "") +
+      theme(plot.title = element_blank(), axis.text.y = element_blank(),
+            axis.ticks.y = element_blank()) +
+      scale_x_discrete(labels = "All cells") +
+      scale_fill_manual(values = rep("grey", 1))
+
+qc_mito_violin <- v1 + v2 + plot_layout(ncol = 2,
+                                        nrow = 1,
+                                        widths = c(4, 1),
+                                        heights = c(2, 2))
+qc_mito_violin
+
+ss2_mutants_final <- subset(ss2_mutants,
+                            subset = nFeature_RNA > 220 & nFeature_RNA < 3300 & percent.mt < 20 & nCount_RNA > 1000)
+# normalize data
+ss2_mutants_final <- NormalizeData(ss2_mutants_final,
+                                   normalization.method = "LogNormalize",
+                                   scale.factor = 10000)
+
+# pca and projection
+ss2_mutants_final <- FindVariableFeatures(ss2_mutants_final,
+                                          selection.method = "vst",
+                                          nfeatures = 2000)
+all.genes <- rownames(ss2_mutants_final)
+ss2_mutants_final <- ScaleData(ss2_mutants_final, features = all.genes)
+
+ss2_mutants_final <- RunPCA(ss2_mutants_final,
+                            features = VariableFeatures(object = ss2_mutants_final), 
+                            verbose = FALSE)
+DimPlot(ss2_mutants_final, reduction = "pca", group.by = "sub_name_updated")
+ElbowPlot(ss2_mutants_final, ndims = 30, reduction = "pca")
+
+ss2_mutants_final <- FindNeighbors(ss2_mutants_final, dims = 1:21)
+ss2_mutants_final <- FindClusters(ss2_mutants_final, resolution = 1)
+
+ss2_mutants_final <- RunUMAP(ss2_mutants_final, dims = 1:12)
+
+clusters_plot <- DimPlot(ss2_mutants_final, group.by = "ident", label = TRUE)
+p2 <- DimPlot(ss2_mutants_final, group.by = "identity_name_updated", 
+              cols = c("#F8766D", "#D89000", "#A3A500", "#39B600", "#00BF7D", 
+                       "#00BFC4", "#00B0F6", "#9590FF", "#B2182B", "#2166AC"))
+clusters_plot + p2
+
+# identify cell clusters by markers genes
+FeaturePlot(ss2_mutants_final,
+            features = c("PBANKA-0515000", "PBANKA-1319500", 
+                         "PBANKA-1212600","PBANKA-0600600", 
+                         "PBANKA-1315700", "PBANKA-0416100", 
+                         "PBANKA-1437500", "PBANKA-0831000", 
+                         "PBANKA-1102200"), 
+            coord.fixed = TRUE, order = TRUE)
+
+# select male and asexual blood stages cells resecptively
+male <- CellSelector(plot = p2, ident = 'SelectedCells')
+asb <- CellSelector(plot = p2, ident = 'SelectedCells')
+
+md5 <- subset(ss2_mutants_final, identity_name_updated == 'md5')
+wt <- subset(ss2_mutants_final, identity_name_updated == 'wild-type')
+
+md5_list <- md5$sample_id
+wt_list <- wt$sample_id
+
+wt_male <- intersect(wt_list, male)
+wt_asb <- intersect(wt_list, asb)
+md5_asb <- intersect(md5_list, asb)
+md5_male <- intersect(md5_list, male)
+
+wt_male <- as.data.frame(wt_male)
+wt_male <- mutate(wt_male, identity = "wt_male")
+wt_asb <- as.data.frame(wt_asb)
+wt_asb <- mutate(wt_asb, identity = "wt_asb")
+
+md5_male <- as.data.frame(md5_male)
+md5_male <- mutate(md5_male, identity = "md5_male")
+md5_asb <- as.data.frame(md5_asb)
+md5_asb <- mutate(md5_asb, identity = "md5_asb")
+
+colnames(md5_asb)[1] <- "sample_id"
+colnames(wt_asb)[1] <- "sample_id"
+colnames(wt_male)[1] <- "sample_id"
+colnames(md5_male)[1] <- "sample_id"
+
+md5_ma <- rbind(md5_male, md5_asb)
+wt_ma <- rbind(wt_male, wt_asb)
+
+md5_ma_list <- md5_ma$sample_id
+wt_m_list <- wt_ma$sample_id
+highlight_list <- list("md5 Male/ASB" = md5_ma_list,
+                       "wt Male/ASB" = wt_ma_list)
+p3 <- DimPlot(ss2_mutants_final, group.by = "identity_name_updated", 
+              cells.highlight = highlight_list, cols.highlight = c("#B2182B", "#2166AC"))
+```
+
+![](male.png)
+
+![](asb.png)
+
+![](male_asb.png)
+
+# 2. Md5_KO intron retention analysis
+
+```{r Pb md5_KO intron retention analysis}
+# create meatadata for intron retention analysis
+intron_meta <- rbind(md5_asb, md5_male, wt_asb, wt_male)
+
+read_run <- read.delim("filereport_read_run_PRJEB44892.txt")
+id_tab <- cbind(read_run$run_accession, read_run$experiment_alias)
+id_tab <- as.data.frame(id_tab)
+colnames(id_tab)[1] <-  "run_id"
+colnames(id_tab)[2] <-  "sample_id"
+
+#id_tab[,2] <- str_sub(id_tab[,2], 46, str_length(id_tab[,2]))
+
+id_tab[,2] <- gsub("#", "_", id_tab[, 2])
+id_tab[,2] <- gsub("_EXP_", "", id_tab[, 2])
+
+#id_tab[,2] <- paste0("SC", id_tab[, 2])
+
+intron_metadata <- data.frame(run_id = character(),
+                              sample_id = character(),
+                              identity = character())
+for (i in 1:nrow(intron_meta))
+{
+      temp1 <- intron_meta[i,]
+      temp2 <- filter(id_tab,
+                      id_tab$sample_id == temp1[, 1])
+      temp3 <- cbind(temp2, temp1)
+      temp3 <- temp3[,c(1,3,4)]
+      intron_metadata <- rbind(intron_metadata, temp3)
+}
+
+intron_run_id <- as.data.frame(intron_metadata[,1])
+intron_run_id[,1] <- paste0(intron_run_id[,1], ".sort.bam")
+
+# prepare data for intron retention analysis
+EI_counts <- read.delim("exon_intron_results_bedtools.tab")
+colnames(EI_counts) <- gsub("X.", "", colnames(EI_counts), fix = TRUE )
+colnames(EI_counts) <- gsub(".sort.bam.", "", colnames(EI_counts), fix = TRUE )
+colnames(EI_counts) <- gsub(".", "", colnames(EI_counts), fix = TRUE )
+
+pb_exon_intron <- read.delim("pb_exon_intron.bed", header = F)
+pb_exon_intron <- pb_exon_intron[, c(2, 3, 4, 8)]
+EI_counts_sort <- EI_counts[order(EI_counts$chr, EI_counts$start),]
+rownames(EI_counts_sort) <- 1:nrow(EI_counts_sort)
+
+temp <-  data.frame(gene_id = pb_exon_intron[, 3], feature = pb_exon_intron[, 4])
+EI_counts_sort <- cbind(temp, EI_counts_sort)
+
+EI_signal <- read.delim("exon_intron_bigwig_signal.tab")
+colnames(EI_signal) <- gsub("X.", "", colnames(EI_signal), fix = TRUE )
+colnames(EI_signal) <- gsub(".normalized.bigwig.", "", colnames(EI_signal), fix = TRUE )
+colnames(EI_signal) <- gsub(".", "", colnames(EI_signal), fix = TRUE )
+
+EI_signal_sort <- EI_signal[order(EI_signal$chr, EI_signal$start),]
+rownames(EI_signal_sort) <- 1:nrow(EI_signal_sort)
+EI_signal_sort <- cbind(temp, EI_signal_sort)
+
+EI_counts_sort <- subset(EI_counts_sort, feature %in% c("intron","exon"))
+EI_signal_sort <- subset(EI_signal_sort, feature %in% c("intron","exon"))
+
+rownames(EI_counts_sort) <- 1:nrow(EI_counts_sort)
+rownames(EI_signal_sort) <- 1:nrow(EI_signal_sort)
+
+EI_counts_sort$gene <- EI_counts_sort$gene_id
+
+EI_counts_sort$gene_id <- paste0(EI_counts_sort$gene_id, "_", EI_counts_sort$feature, "_")
+EI_counts_sort$temp = NA
+
+for (i in 1:nrow(EI_counts_sort))
+{
+     j <- table(EI_counts_sort[c(1:i), 1])
+     k <- j[names(j) == EI_counts_sort[i,1]]
+     EI_counts_sort$temp[i] <- k
+}
+
+EI_counts_sort$gene_id <- paste0(EI_counts_sort$gene_id, EI_counts_sort$temp)
+EI_counts_sort <- EI_counts_sort[ , (names(EI_counts_sort) != "temp")]
+
+EI_signal_sort$gene_id <- paste0(EI_signal_sort$gene_id, "_", EI_signal_sort$feature, "_")
+EI_signal_sort$temp = NA
+for (i in 1:nrow(EI_signal_sort))
+{
+     j <- table(EI_signal_sort[c(1:i), 1])
+     k <- j[names(j) == EI_signal_sort[i,1]]
+     EI_signal_sort$temp[i] <- k
+}
+EI_signal_sort$gene_id <- paste0(EI_signal_sort$gene_id, EI_signal_sort$temp)
+EI_signal_sort <- EI_signal_sort[ , (names(EI_signal_sort) != "temp")]
+
+colnames(pb_exon_intron) <- c("start", "end", "gene_id", "feature")
+
+pb_exon_intron$gene_id <- paste0(pb_exon_intron$gene_id, "_", pb_exon_intron$feature, "_")
+pb_exon_intron$temp = NA
+
+for (i in 1:nrow(pb_exon_intron))
+{
+     j <- table(pb_exon_intron[c(1:i), 3])
+     k <- j[names(j) == pb_exon_intron[i,3]]
+     pb_exon_intron$temp[i] <- k
+}
+
+pb_exon_intron$gene_id <- paste0(pb_exon_intron$gene_id, pb_exon_intron$temp)
+pb_exon_intron <- pb_exon_intron[ , (names(pb_exon_intron) != "temp")]
+pb_EI_only <- subset(pb_exon_intron, feature %in% c("intron","exon"))
+
+rownames(pb_EI_only) <- 1:nrow(pb_EI_only)
+
+intron_metadata <- read.csv("intron_metadata.txt", sep = "")
+
+intron_metadata <- intron_metadata[order(intron_metadata$run_id), ] 
+sample_id <- intron_metadata$sample_id
+
+colnames(EI_counts_sort)[6:708] <- sample_id
+colnames(EI_signal_sort)[6:708] <- sample_id
+
+write.table(EI_signal_sort, "EI_signal_sort.txt", row.names = FALSE, quote = FALSE)
+write.table(EI_counts_sort, "EI_counts_sort.txt", row.names = FALSE, quote = FALSE)
+write.table(pb_EI_only, "pb_exon_intron.txt", row.names = FALSE, quote = FALSE)
+
+temp_EI <- subset(temp, feature %in% c("exon", "intron"))
+EI_counts_sort$gene <- temp_EI$gene_id
+
+intron_n_input <- subset(EI_counts_sort, feature %in% "intron")
+intron_n_input <- intron_n_input[, -2:-5]
+
+for (i in 1:nrow(intron_n_input))
+{
+     temp1 <- subset(EI_counts_sort, gene == intron_n_input$gene[i])
+     temp1 <- temp1[, -2:-5]
+     for (j in 2:704)
+     {
+          k <- sum(temp1[, j])
+          intron_n_input[i, j] <- intron_n_input[i, j] * 1000 / k
+     }
+}
+
+intron_n_input[is.na(intron_n_input)] <- 0
+
+rownames(intron_n_input) <- intron_n_input$gene_id
+intron_n_input <- intron_n_input[,c(-1, -705)]
+
+EI_signal_input <- EI_signal_sort[, -2:-5]
+EI_counts_input <- EI_counts_sort[, -2:-5]
+
+rownames(EI_signal_input) <- EI_signal_input$gene_id
+rownames(EI_counts_input) <- EI_counts_input$gene_id
+
+EI_signal_input <- EI_signal_input[, -1]
+EI_counts_input <- EI_counts_input[, -1]
+
+intron_counts <- subset(EI_counts_sort, feature %in% "intron")
+intron_counts_input <- intron_counts[, -2:-5]
+
+rownames(intron_counts_input) <- intron_counts_input$gene_id
+
+intron_counts_input <- intron_counts_input[, -1]
+
+rownames(intron_metadata) <- intron_metadata$sample_id
+
+colnames(intron_metadata)[3] <- "cell_type"
+
+# create Seurat object and data processing
+intron_md5 <- CreateSeuratObject(counts = intron_n_input,
+                                 project = "MD5_intron",
+                                 min.cells = 50,
+                                 min.features = 1,
+                                 meta.data = intron_metadata)
+
+intron_md5 <- subset(intron_md5,
+                     nCount_RNA < 50000)
+
+
+intron_md5 <- NormalizeData(intron_md5,
+                            normalization.method = "LogNormalize",
+                            scale.factor = 10000)
+
+intron_md5 <- FindVariableFeatures(intron_md5,
+                                   selection.method = "vst",
+                                  )
+
+all_intron <- rownames(intron_md5)
+intron_md5 <- ScaleData(intron_md5, features = all_intron)
+
+intron_md5 <- RunPCA(intron_md5, features = VariableFeatures(object = intron_md5), verbose = FALSE)
+DimPlot(intron_md5, reduction = "pca", group.by = "cell_type")
+
+ElbowPlot(intron_md5, ndims = 50, reduction = "pca")
+
+intron_md5 <- FindNeighbors(intron_md5, dims = 1:8)
+intron_md5 <- FindClusters(intron_md5, resolution = 1)
+
+intron_md5 <- RunUMAP(intron_md5, dims = 1:8)
+intron_md5 <- RunTSNE(intron_md5, dims = 1:8)
+clusters_plot <- DimPlot(intron_md5, group.by = "ident", label = TRUE)
+p2 <- DimPlot(intron_md5, group.by = "cell_type")
+DimPlot(intron_md5, reduction = "tsne", group.by = "cell_type")
+clusters_plot + p2
+
+#select md5_ko and wt male cells 
+wt_male_i <- CellSelector(plot = p2, ident = 'SelectedCells')
+md5_male_i <- CellSelector(plot = p2, ident = 'SelectedCells')
+asb_i <- CellSelector(plot = p2, ident = 'SelectedCells')
+
+md5_male_list <- subset(intron_metadata, cell_type =="md5_male")
+md5_male_list <- md5_male_list$sample_id
+md5_male_list <- intersect(md5_male_i,md5_male_list)
+md5_asb_list <- subset(intron_metadata, cell_type =="md5_asb")
+md5_asb_list <- md5_asb_list$sample_id
+md5_asb_list <- intersect(md5_asb_list, asb_i)
+
+wt_male_list <- subset(intron_metadata, cell_type =="wt_male")
+wt_male_list <- wt_male_list$sample_id
+wt_male_list <- intersect(wt_male_i,wt_male_list)
+wt_asb_list <- subset(intron_metadata, cell_type =="wt_asb")
+wt_asb_list <- wt_asb_list$sample_id
+wt_asb_list <- intersect(wt_asb_list, asb_i)
+
+highlight_i <- list("md5_male" = md5_male_list,
+                    "wt_male" = wt_male_list)
+Cell_Highlight_Plot(seurat_object = intron_md5,
+                   cells_highlight = highlight_i,
+                   highlight_color = c("#7CAE00","#C77CFF"))
+
+intron_md5$intron_cluster <- case_when(intron_md5$sample_id %in% md5_male_list  ~ "md5_male",
+                                       intron_md5$sample_id %in% md5_asb_list  ~ "md5_asb",
+                                       intron_md5$sample_id %in% wt_male_list  ~ "wt_male",
+                                       intron_md5$sample_id %in% wt_asb_list  ~ "wt_asb",
+                                       )
+
+intron_md5$intron_cluster[is.na(intron_md5$intron_cluster)]  <- "outlier"
+
+# call differentially retained introns, p-value adjusted by FDR method
+intron_diff_fdr <- FindMarkers(intron_md5, group.by = "intron_cluster",
+                              ident.1 = "md5_male", ident.2 = "wt_male",
+                              logfc.threshold=0, min.pct=0, min.diff.pct=0)
+
+intron_diff_fdr$fdr = p.adjust(intron_diff_fdr$p_val, method='fdr')
+rownames(intron_diff_fdr) <- gsub("-", "_", rownames(intron_diff_fdr), fix = T)
+intron_diff_fdr$gene_id <- str_sub(rownames(intron_diff_fdr), 1, 14)
+write.csv(intron_diff_fdr, "intron_diff_ff_fdr.csv")
+
+intron_diff_logFC1_fdr_0.05 <- filter(intron_diff_fdr,
+                                      avg_log2FC >= 1,
+                                      fdr <= 0.05)
+
+write.csv(intron_diff_logFC1_fdr_0.05, "intron_diff_fdr_logFC1_fdr_0.05.csv")
+
+# pseduobulk abandoned 
+# md5_pheno <- subset(pheno_as_c_removed_gp_ps,
+#                     pheno_as_c_removed_gp_ps$sample_id %in% intron_md5@meta.data$sample_id)
+
+# md5_pheno <- md5_pheno[order(md5_pheno$sample_id),]
+# intron_md5$plate_id <- md5_pheno$plate_id_unique
+
+# md5_pseudo <- subset(intron_md5,
+#                      subset = sample_id %in% md5_male_list | sample_id %in% wt_male_list)
+
+# matrix_pseudo <- as.data.frame(AggregateExpression(intron_md5,
+                               #group.by = c("intron_cluster", "plate_id"),
+                               #slot = "counts",
+                               #return.seurat = FALSE))
+
+# matrix_pseudo <- Seurat2PB(md5_pseudo, sample="plate_id", cluster="intron_cluster")
+
+# colnames(matrix_pseudo) <- gsub("_male_.*(_plate_.*)","\\1", colnames(matrix_pseudo))
+# colnames(matrix_pseudo) <- gsub("RNA.","", colnames(matrix_pseudo), fix = TRUE)
+
+
+# differentail retained introns calling with edgeR
+# edgeR_group <- rep(c('KO', 'WT'), times = c(4, 19))
+
+# matrix_pseudo <- DGEList(counts = matrix_pseudo, group = edgeR_group)
+# matrix_pseudo <- calcNormFactors(matrix_pseudo, method = 'TMM')
+
+#cluster <- as.factor(matrix_pseudo$samples$cluster)
+# plotMDS(matrix_pseudo, pch=16, col=c(2:8)[cluster], main="MDS")
+
+# n_pseudo <- matrix_pseudo$counts
+# n_pseudo_mata <- as.data.frame(matrix_pseudo$samples$cluster)
+
+# rownames(n_pseudo_mata) <- rownames(matrix_pseudo$samples)
+# colnames(n_pseudo_mata)[1] <- "Groups"
+
+# p <- pca(n_pseudo, metadata = n_pseudo_mata, removeVar = 0.1)
+# biplot(p, showLoadings = FALSE,
+#        colby = 'Groups',
+#        legendPosition = "right",
+#        lab = "",
+#        shape = 'Groups',
+#        pointSize = 4,
+#        legendIconSize = 4)
+
+# biplot(p, showLoadings = FALSE,
+#        colby = 'Groups',
+#        legendPosition = "right",
+#        shape = 'Groups',
+#        pointSize = 4.
+#        legendIconSize = 4)
+
+
+# kp_list <- c("GCSKO-19_plate_1_clustermd5_male","GCSKO-19_plate_2_clustermd5_male",
+#              "GCSKO-19_plate_3_clustermd5_male", "GCSKO-19_plate_4_clustermd5_male",
+#              "GCSKO-19_plate_1_clusterwt_male","GCSKO-19_plate_2_clusterwt_male",
+#              "GCSKO-19_plate_3_clusterwt_male", "GCSKO-19_plate_4_clusterwt_male")
+
+# matrix_pseudo <- Seurat2PB(md5_pseudo, sample = "plate_id", cluster = "intron_cluster")
+
+# n_pseudo_kp <- as.data.frame(matrix_pseudo$counts)
+# n_pseudo_mata_kp <- as.data.frame(matrix_pseudo$samples$cluster)
+# rownames(n_pseudo_mata_kp) <- rownames(matrix_pseudo$samples)
+# colnames(n_pseudo_mata_kp)[1] <- "Groups"
+
+
+# n_pseudo_kp <- n_pseudo_kp[, colnames(n_pseudo_kp) %in% kp_list]
+# n_pseudo_mata_kp <- subset(n_pseudo_mata_kp, rownames(n_pseudo_mata_kp) %in% kp_list)
+
+# kp_group <- n_pseudo_mata_kp$Groups
+# kp_group <- factor(kp_group)
+# kp_group <- relevel(kp_group, ref="wt_male")
+
+# matrix_n_pseudo_kp <- DGEList(counts =n_pseudo_kp, group = kp_group)
+# matrix_n_pseudo_kp <- calcNormFactors(matrix_n_pseudo_kp, method = 'TMM')
+
+# n_1 <- matrix_n_pseudo_kp$counts
+# n_1_mata <- as.data.frame(matrix_n_pseudo_kp$samples$group)
+
+# rownames(n_1_mata) <- rownames(matrix_n_pseudo_kp$samples)
+# colnames(n_1_mata)[1] <- "Groups"
+
+# p4 <- pca(n_1, metadata = n_1_mata, removeVar = 0.1)
+# biplot(p4, showLoadings = FALSE,
+#        colby = 'Groups',
+#        legendPosition = "right",
+#        lab = "",
+#        shape = 'Groups',
+#        pointSize = 4,
+#        legendIconSize = 4)
+
+
+# #times
+# times_p <- c("1","1","2","2","3","3","4","4")
+
+
+# design <- model.matrix(~times_p+times_p: kp_group)
+# logFC <- predFC(matrix_n_pseudo_kp, design, prior.count=1, dispersion=0.05)
+# cor(logFC[,5:8])
+
+# design <- model.matrix(~times_p+kp_group)
+# rownames(design) <- colnames(matrix_n_pseudo_kp)
+# design
+
+
+# #outlier:  "WT-820_plate_1_clusterwt_male", 
+# #"WT-820_3_5_plate_2_clusterwt_male","WT-820_3_5_plate_1_clusterwt_male", "WT-820_plate_2_clusterwt_male","WT-820_plate_3_clusterwt_male"
+# #remove outlier and redo PCA
+# rm_list <- c("WT-820_plate_2_clusterwt_male",
+#              "WT-820_plate_3_clusterwt_male")
+
+
+# #which.min(strsplit("WT−820_plate_2_clusterwt_male", "")[[1]] == strsplit("WT-820_plate_2_clusterwt_male", "")[[1]])
+
+# matrix_pseudo_rm <- Seurat2PB(md5_pseudo, sample="plate_id", cluster="intron_cluster")
+# n_pseudo_rm <- as.data.frame(matrix_pseudo_rm$counts)
+# n_pseudo_mata_rm <- as.data.frame(matrix_pseudo_rm$samples$cluster)
+# rownames(n_pseudo_mata_rm) <- rownames(matrix_pseudo_rm$samples)
+# colnames(n_pseudo_mata_rm)[1] <- "Groups"
+
+# n_pseudo_rm <- n_pseudo_rm[, !colnames(n_pseudo_rm) %in% rm_list]
+# n_pseudo_mata_rm <- subset(n_pseudo_mata_rm, !rownames(n_pseudo_mata_rm) %in% rm_list)
+
+# p2 <- pca(n_pseudo_rm, metadata = n_pseudo_mata_rm, removeVar = 0.1)
+# biplot(p2, showLoadings = FALSE,
+#        colby = 'Groups',
+#        legendPosition = "right",
+#        lab = "",
+#        shape = 'Groups',
+#        pointSize = 4,
+#        legendIconSize = 4)
+
+# rm_group <- n_pseudo_mata_rm$Groups
+# matrix_n_pseudo_rm <- DGEList(counts =n_pseudo_rm, group = rm_group)
+# matrix_n_pseudo_rm <- calcNormFactors(matrix_n_pseudo_rm , method = 'TMM')
+
+# #matrix_pseudo <- model.matrix(~edgeR_group)
+
+# design <- model.matrix(~rm_group)
+# din <- estimateDisp(matrix_n_pseudo_rm, design, robust = TRUE)
+# fit <- glmQLFit(din, design, robust = TRUE)
+# lrt <- topTags(glmQLFTest(fit), n = nrow(dinlist$counts))
+# intron_diff_pseudo_edgeR_rm <- as.data.frame(lrt@.Data)
+
+
+# #use a keep list "GCSKO-19_plate_1_clustermd5_male","GCSKO-19_plate_2_clustermd5_male", "GCSKO-19_plate_3_clustermd5_male", "GCSKO-19_plate_4_clustermd5_male"
+# #"GCSKO-19_plate_1_clusterwt_male","GCSKO-19_plate_2_clusterwt_male", "GCSKO-19_plate_3_clusterwt_male", "GCSKO-19_plate_4_clusterwt_male"
+
+# kp_list <- c("GCSKO-19_plate_1_clustermd5_male","GCSKO-19_plate_2_clustermd5_male",
+#              "GCSKO-19_plate_3_clustermd5_male", "GCSKO-19_plate_4_clustermd5_male",
+#              "GCSKO-19_plate_1_clusterwt_male","GCSKO-19_plate_2_clusterwt_male",
+#              "GCSKO-19_plate_3_clusterwt_male", "GCSKO-19_plate_4_clusterwt_male")
+
+
+# matrix_pseudo_kp <- Seurat2PB(md5_pseudo, sample="plate_id", cluster="intron_cluster")
+# n_pseudo_kp <- as.data.frame(matrix_pseudo_rm$counts)
+# n_pseudo_mata_kp <- as.data.frame(matrix_pseudo_kp$samples$cluster)
+# rownames(n_pseudo_mata_kp) <- rownames(matrix_pseudo_kp$samples)
+# colnames(n_pseudo_mata_kp)[1] <- "Groups"
+
+# n_pseudo_kp <- n_pseudo_kp[, colnames(n_pseudo_kp) %in% kp_list]
+# n_pseudo_mata_kp <- subset(n_pseudo_mata_kp, rownames(n_pseudo_mata_kp) %in% kp_list)
+
+# p3 <- pca(n_pseudo_kp, metadata = n_pseudo_mata_kp, removeVar = 0.1)
+# biplot(p3, showLoadings = FALSE,
+#        colby = 'Groups',
+#        legendPosition = "right",
+#        lab = "",
+#        shape = 'Groups',
+#        pointSize = 4,
+#        legendIconSize = 4)
+
+# kp_group <- n_pseudo_mata_kp$Groups
+# matrix_n_pseudo_kp <- DGEList(counts =n_pseudo_kp, group = kp_group)
+# matrix_n_pseudo_kp <- calcNormFactors(matrix_n_pseudo_kp , method = 'TMM')
+
+# design <- model.matrix(~kp_group)
+# din <- estimateDisp(matrix_n_pseudo_kp, design, robust = TRUE)
+# fit <- glmQLFit(din, design, robust = TRUE)
+# lrt <- topTags(glmQLFTest(fit), n = nrow(dinlist$counts))
+# intron_diff_pseudo_edgeR_kp <- as.data.frame(lrt@.Data)
+
+```
+
+![](intron.png)
+
+# 3. Overlaps between Py_RBPm1_KO and Pb_md5_KO intron retention
+
+```{r Py_RBPm1_KO and Pb_md5_KO intron retention overlap analysis}
+py_RI_list <- read.csv("py_RI_list.txt", sep="")
+pb_ortho_padj <- read.csv("pb_ortho_padj.csv")
+py_RI_ortho <- read.csv("py_RI_ortho.csv")
+
+pb_ortho_padj <- pb_ortho_padj[,c(1,7)]
+py_RI_ortho <- py_RI_ortho[,c(1,5)]
+colnames(pb_ortho_padj)[1] <- "pb_gene_id"
+colnames(py_RI_ortho)[1] <- "py_gene_id"
+
+ortho_group <- intersect(pb_ortho_padj$Ortholog.Group, py_RI_ortho$Ortholog.Group)
+pb_py_RI_ortho <-subset(pb_ortho_padj, pb_ortho_padj$Ortholog.Group %in% ortho_group)
+pb_co_list <- rownames(subset(intron_diff_logFC1_padj_0.05, intron_diff_logFC1_padj_0.05$gene_id %in% pb_py_RI_ortho$pb_gene_id))
+
+vol_data <- data.frame(intron = rownames(intron_diff),
+                       padj = -log10(intron_diff$p_val_adj),
+                       lfc = intron_diff$avg_log2FC)
+
+vol_data <- mutate(vol_data, color = case_when(vol_data$lfc > 1 & vol_data$padj > 1.3  ~ "Increased",
+                                       vol_data$lfc < -1 & vol_data$padj > 1.3  ~ "Decreased",
+                                       vol_data$padj < 1.3  ~ "nonsignificant",
+                                       vol_data$lfc <= 1 & vol_data$padj >= -1 ~ "nonsignificant"
+                                      ))
+
+vol <- ggplot(vol_data, aes(x = lfc, y = padj, color = color))
+
+vol +   
+     ggtitle(label = "Volcano Plot for Intron Rentetion Events", subtitle = "Colored by fold-change direction") +
+             geom_point(size = 2.5, alpha = 0.8, na.rm = T) +
+             scale_color_manual(name = "Directionality",
+                                values = c(Increased = "#D7D7D7", Decreased = "#D7D7D7", nonsignificant = "#D7D7D7")) +
+                                theme_bw(base_size = 14) +
+             theme(legend.position = "right") +
+             xlab(expression(log[2]("Fold Change (KO / WT)"))) +
+             ylab(expression(-log[10]("P-adj"))) +
+             geom_hline(yintercept = 1.3, colour = "darkgrey", linetype="dashed") +
+             geom_vline(xintercept = 1, colour = "darkgrey", linetype="dashed") +
+             geom_vline(xintercept = -1, colour = "darkgrey", linetype="dashed") +
+             geom_text_repel(aes(label = intron), 
+                       data = vol_data[vol_data$intron  %in% pb_co_list,],size= 4, 
+                       vjust= -1, hjust = 1, show.legend = FALSE, color="black") +
+             geom_point(data = vol_data[vol_data$intron  %in% pb_co_list,],color="#33bfff") +
+             theme_bw() + 
+             theme(panel.grid=element_blank())
+
+r1 <- gsub("_","-", rownames(intron_diff_logFC1_padj_0.05))
+
+intron_md5_dot <- subset(intron_md5, intron_cluster %in% c("md5_male","md5_asb","wt_male","wt_asb"))
+
+Clustered_DotPlot(seurat_object = intron_md5_dot, features = r1, group.by = "intron_cluster", cluster_feature =FALSE,cluster_ident = FALSE)
+Clustered_DotPlot(seurat_object = intron_md5_dot, features = r1, group.by = "intron_cluster")
+```
