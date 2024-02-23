@@ -33,7 +33,7 @@ row.names(counts) <- counts[, 1]
 counts <- counts[, -1]
 counts <- counts[1:5254,]
 
-#load pheno_2020 from Andrew J.C. Russell et.al. as metadata [RStudio](https://www.rstudio.com)
+#load pheno_2020 from Andrew [J.C. Russell et.al.](https://www.cell.com/cell-host-microbe/fulltext/S1931-3128(22)00612-6) as metadata
 pheno_2020 <- read.csv("pheno_2020.csv")
 pheno_2020 <- pheno_2020[, -1]
 rownames(pheno_2020) <- pheno_2020$sample_id
