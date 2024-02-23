@@ -191,11 +191,6 @@ p3 <- DimPlot(ss2_mutants_final, group.by = "identity_name_updated",
               cells.highlight = highlight_list, cols.highlight = c("#B2182B", "#2166AC"))
 ```
 
-![](male.png)
-
-![](asb.png)
-
-![](male_asb.png)
 
 # 2. Md5_KO intron retention analysis
 
@@ -629,7 +624,6 @@ write.csv(intron_diff_logFC1_fdr_0.05, "intron_diff_fdr_logFC1_fdr_0.05.csv")
 
 ```
 
-![](intron.png)
 
 # 3. Overlaps between Py_RBPm1_KO and Pb_md5_KO intron retention
 
