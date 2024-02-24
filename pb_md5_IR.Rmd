@@ -643,32 +643,30 @@ vol_data <- data.frame(intron = rownames(intron_diff),
                        padj = -log10(intron_diff$p_val_adj),
                        lfc = intron_diff$avg_log2FC)
 
-vol_data <- mutate(vol_data, color = case_when(vol_data$lfc > 1 & vol_data$padj > 1.3  ~ "Increased",
-                                       vol_data$lfc < -1 & vol_data$padj > 1.3  ~ "Decreased",
-                                       vol_data$padj < 1.3  ~ "nonsignificant",
-                                       vol_data$lfc <= 1 & vol_data$padj >= -1 ~ "nonsignificant"
-                                      ))
+vol_data <- mutate(vol_data, color = case_when(vol_data$intron %in% pb_co_list  ~ "dark",
+                                               vol_data$intron %in% rownames(intron_diff_logFC1_padj_0.05) & !(vol_data$intron %in% pb_co_list) ~ "light",
+                                               !(vol_data$intron %in% rownames(intron_diff_logFC1_padj_0.05)) ~ "nonsig"))
+
 
 vol <- ggplot(vol_data, aes(x = lfc, y = padj, color = color))
 
 vol +   
-     ggtitle(label = "Volcano Plot for Intron Rentetion Events", subtitle = "Colored by fold-change direction") +
-             geom_point(size = 2.5, alpha = 0.8, na.rm = T) +
-             scale_color_manual(name = "Directionality",
-                                values = c(Increased = "#D7D7D7", Decreased = "#D7D7D7", nonsignificant = "#D7D7D7")) +
-                                theme_bw(base_size = 14) +
-             theme(legend.position = "right") +
-             xlab(expression(log[2]("Fold Change (KO / WT)"))) +
-             ylab(expression(-log[10]("P-adj"))) +
-             geom_hline(yintercept = 1.3, colour = "darkgrey", linetype="dashed") +
-             geom_vline(xintercept = 1, colour = "darkgrey", linetype="dashed") +
-             geom_vline(xintercept = -1, colour = "darkgrey", linetype="dashed") +
-             geom_text_repel(aes(label = intron), 
-                       data = vol_data[vol_data$intron  %in% pb_co_list,],size= 4, 
-                       vjust= -1, hjust = 1, show.legend = FALSE, color="black") +
-             geom_point(data = vol_data[vol_data$intron  %in% pb_co_list,],color="#33bfff") +
-             theme_bw() + 
-             theme(panel.grid=element_blank())
+    ggtitle(label = "Volcano Plot for Intron Rentetion Events", subtitle = "Colored by fold-change direction") +
+    geom_point(shape = 16,size = 2, alpha = 0.8, na.rm = T) +
+    scale_color_manual(name = "Directionality",
+                       values = c(dark = "#167FFF", light = "#97D7F8", nonsig = "#D7D7D7")) +
+    theme_bw(base_size = 14) +
+    theme(legend.position = "right") +
+    xlab(expression(log[2]("Fold Change (KO / WT)"))) +
+    ylab(expression(-log[10]("P-adj"))) +
+    geom_hline(yintercept = 1.3, colour = "darkgrey", linetype="dashed") +
+    geom_vline(xintercept = 1, colour = "darkgrey", linetype="dashed") +
+    geom_vline(xintercept = -1, colour = "darkgrey", linetype="dashed") +
+    geom_text_repel(aes(label = intron), 
+                    data = vol_data[vol_data$intron  %in% pb_co_list,],size= 1, 
+                    vjust= -1, hjust = 1, show.legend = FALSE, color="black") +
+    theme_bw() + 
+    theme(panel.grid=element_blank())
 
 r1 <- gsub("_","-", rownames(intron_diff_logFC1_padj_0.05))
 
