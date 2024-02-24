@@ -424,21 +424,19 @@ intron_md5$intron_cluster <- case_when(intron_md5$sample_id %in% md5_male_list  
 
 intron_md5$intron_cluster[is.na(intron_md5$intron_cluster)]  <- "outlier"
 
-# call differentially retained introns, p-value adjusted by FDR method
-intron_diff_fdr <- FindMarkers(intron_md5, group.by = "intron_cluster",
-                              ident.1 = "md5_male", ident.2 = "wt_male",
-                              logfc.threshold=0, min.pct=0, min.diff.pct=0)
+# call differentially retained introns
+intron_diff <- FindMarkers(intron_md5, group.by = "intron_cluster", 
+                           ident.1 = "md5_male", ident.2 = "wt_male")
 
-intron_diff_fdr$fdr = p.adjust(intron_diff_fdr$p_val, method='fdr')
-rownames(intron_diff_fdr) <- gsub("-", "_", rownames(intron_diff_fdr), fix = T)
-intron_diff_fdr$gene_id <- str_sub(rownames(intron_diff_fdr), 1, 14)
-write.csv(intron_diff_fdr, "intron_diff_ff_fdr.csv")
+rownames(intron_diff) <- gsub("-", "_", rownames(intron_diff), fix = T)
+intron_diff$gene_id <- str_sub(rownames(intron_diff), 1, 14)
+write.csv(intron_diff, "intron_diff_ff.csv")
 
-intron_diff_logFC1_fdr_0.05 <- filter(intron_diff_fdr,
-                                      avg_log2FC >= 1,
-                                      fdr <= 0.05)
+intron_diff_logFC1_padj_0.05 <- filter(intron_diff,
+                                       avg_log2FC >= 1,
+                                       p_val_adj <= 0.05)
 
-write.csv(intron_diff_logFC1_fdr_0.05, "intron_diff_fdr_logFC1_fdr_0.05.csv")
+write.csv(intron_diff_logFC1_padj_0.05, "intron_diff_logFC1_padj_0.05.csv")
 
 # pseduobulk abandoned 
 # md5_pheno <- subset(pheno_as_c_removed_gp_ps,
@@ -632,7 +630,7 @@ py_RI_list <- read.csv("py_RI_list.txt", sep="")
 pb_ortho_padj <- read.csv("pb_ortho_padj.csv")
 py_RI_ortho <- read.csv("py_RI_ortho.csv")
 
-pb_ortho_padj <- pb_ortho_padj[,c(1,7)]
+pb_ortho_padj <- pb_ortho_padj[,c(1,5)]
 py_RI_ortho <- py_RI_ortho[,c(1,5)]
 colnames(pb_ortho_padj)[1] <- "pb_gene_id"
 colnames(py_RI_ortho)[1] <- "py_gene_id"
